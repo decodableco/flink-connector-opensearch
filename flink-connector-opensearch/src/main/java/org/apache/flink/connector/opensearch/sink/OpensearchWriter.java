@@ -50,6 +50,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Random;
 
 import static org.apache.flink.util.ExceptionUtils.firstOrSuppressed;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -77,6 +78,7 @@ class OpensearchWriter<IN> implements SinkWriter<IN> {
     private volatile long lastSendTime = 0;
     private volatile long ackTime = Long.MAX_VALUE;
     private volatile boolean closed = false;
+    private final Random rand = new Random();
 
     /**
      * Constructor creating an Opensearch writer.
@@ -128,6 +130,11 @@ class OpensearchWriter<IN> implements SinkWriter<IN> {
 
     @Override
     public void write(IN element, Context context) throws IOException, InterruptedException {
+        int randInt = rand.nextInt(10);
+        if (randInt == 3) {
+            throw new RuntimeException("**TESTING**: rand int exception in write");
+        }
+        LOG.info(String.format("element: %s", element));
         // do not allow new bulk writes until all actions are flushed
         while (checkpointInProgress) {
             mailboxExecutor.yield();
