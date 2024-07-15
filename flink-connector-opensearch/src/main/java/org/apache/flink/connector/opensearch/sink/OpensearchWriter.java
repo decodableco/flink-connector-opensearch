@@ -28,7 +28,6 @@ import org.apache.flink.util.function.ThrowingRunnable;
 
 import org.apache.http.HttpHost;
 import org.opensearch.action.ActionListener;
-import org.opensearch.action.DocWriteRequest;
 import org.opensearch.action.bulk.BackoffPolicy;
 import org.opensearch.action.bulk.BulkItemResponse;
 import org.opensearch.action.bulk.BulkProcessor;
@@ -49,7 +48,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.apache.flink.util.ExceptionUtils.firstOrSuppressed;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -264,8 +265,13 @@ class OpensearchWriter<IN> implements SinkWriter<IN> {
             pendingActions -= request.numberOfActions();
             return;
         }
+        dedupBulkResponseExceptionsAndHandleFailures(response, failureHandler);
+    }
 
+    protected static void dedupBulkResponseExceptionsAndHandleFailures(
+            BulkResponse response, FailureHandler failureHandler) {
         Throwable chainedFailures = null;
+        Set<String> seenRootCauses = new HashSet<>();
         for (int i = 0; i < response.getItems().length; i++) {
             final BulkItemResponse itemResponse = response.getItems()[i];
             if (!itemResponse.isFailed()) {
@@ -276,11 +282,17 @@ class OpensearchWriter<IN> implements SinkWriter<IN> {
                 continue;
             }
             final RestStatus restStatus = itemResponse.getFailure().getStatus();
-            final DocWriteRequest<?> actionRequest = request.requests().get(i);
 
-            chainedFailures =
-                    firstOrSuppressed(
-                            wrapException(restStatus, failure, actionRequest), chainedFailures);
+            Throwable rootCause = failure;
+            while (rootCause.getCause() != null) {
+                rootCause = rootCause.getCause();
+            }
+
+            if (!seenRootCauses.contains(rootCause.getMessage())) {
+                seenRootCauses.add(rootCause.getMessage());
+                chainedFailures =
+                        firstOrSuppressed(wrapException(restStatus, failure), chainedFailures);
+            }
         }
         if (chainedFailures == null) {
             return;
@@ -288,17 +300,12 @@ class OpensearchWriter<IN> implements SinkWriter<IN> {
         failureHandler.onFailure(chainedFailures);
     }
 
-    private static Throwable wrapException(
-            RestStatus restStatus, Throwable rootFailure, DocWriteRequest<?> actionRequest) {
+    private static Throwable wrapException(RestStatus restStatus, Throwable rootFailure) {
         if (restStatus == null) {
-            return new FlinkRuntimeException(
-                    String.format("Single action %s of bulk request failed.", actionRequest),
-                    rootFailure);
+            return new FlinkRuntimeException("Bulk request failed.", rootFailure);
         } else {
             return new FlinkRuntimeException(
-                    String.format(
-                            "Single action %s of bulk request failed with status %s.",
-                            actionRequest, restStatus.getStatus()),
+                    String.format("Bulk request failed with status %s.", restStatus.getStatus()),
                     rootFailure);
         }
     }
