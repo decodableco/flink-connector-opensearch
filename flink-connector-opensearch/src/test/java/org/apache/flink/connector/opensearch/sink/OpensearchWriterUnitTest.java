@@ -11,6 +11,7 @@ import org.opensearch.action.bulk.BulkResponse;
 
 import java.io.IOException;
 
+/** Unit tests for {@link OpensearchWriter}. */
 public class OpensearchWriterUnitTest {
 
     private static final String MAPPER_PARSING_EXCEPTION_TEMPLATE =
